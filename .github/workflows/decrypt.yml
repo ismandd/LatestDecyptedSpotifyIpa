@@ -20,9 +20,9 @@ jobs:
           python-version: '3.10'
 
       - name: Install Dependencies
-        run: pip install telethon requests
+        run: pip install telethon requests beautifulsoup4
 
-      - name: Check Live App Store Webpage vs GitHub Releases
+      - name: Check Live App Store Page vs GitHub Releases
         id: check_version
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -32,12 +32,12 @@ jobs:
           import re
           import os
           import sys
+          import json
+          from bs4 import BeautifulSoup
 
-          # 1. Fake a complete modern Mac Safari browser footprint to get full raw source text
           url = "https://apps.apple.com/us/app/spotify-music-and-podcasts/id324684580"
           headers = {
-              "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
-              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+              "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
               "Accept-Language": "en-US,en;q=0.9"
           }
           
@@ -47,19 +47,43 @@ jobs:
               print(f"Failed to connect to Apple servers: {e}")
               sys.exit(1)
 
-          # 2. Extract version targeting Apple's embedded web layout blocks.
-          # This specifically searches for "version":"9.1.48" inside the raw code data arrays.
-          version_match = re.search(r'\"version\"\s*:\s*\"([0-9]+\.[0-9]+\.[0-9]+)\"', html_content)
+          current_version = None
 
-          if version_match:
-              current_version = version_match.group(1).strip()
-          else:
-              print("Critical Error: Failed to isolate the version text element from the web source code.")
+          # 1. Target the raw "shoebox" JSON embedded script block where Apple stores the loaded JS state data
+          soup = BeautifulSoup(html_content, 'html.parser')
+          script_tag = soup.find('script', id='shoebox-ember-data-store') or soup.find('script', type='application/json')
+          
+          if script_tag:
+              try:
+                  js_data = json.loads(script_tag.string)
+                  # Safely traverse the dynamic JS data tree for the versionString attribute
+                  for item in js_data.get('included', []):
+                      if item.get('type') == 'product' or 'versionString' in item.get('attributes', {}):
+                          current_version = item['attributes']['versionString'].strip()
+                          break
+              except Exception as e:
+                  print(f"Found script block but failed parsing JS payload: {e}")
+
+          # 2. Dynamic text regex fallback if the script block identity layout shifted
+          if not current_version:
+              # Targets 'versionString': '9.1.48' layout elements inside the JS array script pools
+              match = re.search(r'\"versionString\"\s*:\s*\"([0-9.]+)\"', html_content)
+              if match:
+                  current_version = match.group(1).strip()
+
+          # 3. EMERGENCY LOGGING: If everything failed, dump the page data for diagnosis
+          if not current_version:
+              print("❌ Critical Error: Could not isolate version string from JS data targets.")
+              print("Saving raw HTML dump to 'appstore_dump.html' for inspection...")
+              with open("appstore_dump.html", "w", encoding="utf-8") as dump_file:
+                  dump_file.write(html_content)
+              
+              # Set an environment variable so the step pipeline throws an error code
               sys.exit(1)
 
-          print(f"Live App Store Version Safely Isolated: {current_version}")
+          print(f"✅ Success! Live App Store Version Found: {current_version}")
 
-          # 3. Check if your repository already has a release tag for this version
+          # 4. Check if your repository already has a release tag for this version
           repo = os.environ['GITHUB_REPOSITORY']
           gh_headers = {"Authorization": f"token {os.environ['GITHUB_TOKEN']}"}
           tag_url = f"https://api.github.com/repos/{repo}/releases/tags/v{current_version}"
@@ -76,6 +100,15 @@ jobs:
                   print(f"New update detected (v{current_version})! Initializing download pipeline.")
                   f.write("exists=false\n")
           EOF
+
+      # This step only runs if the Python check crashes out (failure condition)
+      - name: Upload Debug HTML Log On Failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: appstore-error-dump
+          path: appstore_dump.html
+          retention-days: 7
 
       - name: Execute Telegram Decryption Script
         if: steps.check_version.outputs.exists == 'false'
