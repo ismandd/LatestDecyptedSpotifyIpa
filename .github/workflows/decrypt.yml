@@ -1,6 +1,6 @@
 name: Get Decrypted Spotify
 on:
-  workflow_dispatch: # This adds a manual "Run" button in GitHub
+  workflow_dispatch:
 
 jobs:
   run-decryption:
@@ -24,8 +24,8 @@ jobs:
           TELEGRAM_SESSION: ${{ secrets.TELEGRAM_SESSION }}
         run: python main.py
 
-      - name: Upload IPA as Artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload Unzipped IPA
+        uses: actions/upload-artifact@v7
         with:
-          name: Spotify-Decrypted-IPA
-          path: spotify_decrypted.ipa
+          path: "*.ipa"
+          archive: false  # Bypasses the zip engine entirely
