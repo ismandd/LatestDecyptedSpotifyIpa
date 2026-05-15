@@ -1,7 +1,7 @@
 name: Automated Spotify Update Fetcher
 on:
   schedule:
-    - cron: '0 0 * * *' # Automatically runs every single day at midnight UTC
+    - cron: '0 0 * * *' # Runs automatically every single day at midnight UTC
   workflow_dispatch: # Keeps your manual "Run workflow" button active
 
 jobs:
@@ -22,7 +22,7 @@ jobs:
       - name: Install Dependencies
         run: pip install telethon requests
 
-      - name: Check Live App Store Webpage vs GitHub Releases
+      - name: Check Live App Store Stream vs GitHub Releases
         id: check_version
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -33,31 +33,35 @@ jobs:
           import os
           import sys
 
-          # 1. Fetch live App Store HTML via web preview (bypasses stale API caches)
-          url = "https://apps.apple.com/us/app/spotify-music-and-podcasts/id324684580"
-          headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-          
+          # 1. Query the live Apple RSS feed system for the US App Store
+          url = "https://itunes.apple.com/us/rss/customerreviews/id=324684580/json"
           try:
-              html_content = requests.get(url, headers=headers, timeout=15).text
+              data = requests.get(url, timeout=15).json()
+              # Dig straight into the first entry element which targets the latest app definition metadata
+              feed_entries = data.get('feed', {}).get('entry', [])
+              
+              if not feed_entries:
+                  print("Could not parse entry array from feed, trying fallback parsing...")
+                  # Backup check: pulling raw page cleanly
+                  page_url = "https://apps.apple.com/us/app/spotify-music-and-podcasts/id324684580"
+                  html = requests.get(page_url, headers={"User-Agent": "Mozilla/5.0"}).text
+                  v_match = re.search(r'\"version\"\s*:\s*\"([0-9.]+)\"', html)
+                  current_version = v_match.group(1) if v_match else None
+              else:
+                  # The application metadata block is assigned to index 0 inside the entries array
+                  current_version = feed_entries[0].get('im:version', {}).get('label', '').strip()
+          
           except Exception as e:
-              print(f"Failed to fetch App Store page: {e}")
+              print(f"Connection failure to feed tracking servers: {e}")
               sys.exit(1)
 
-          # 2. Extract the true version number from the page elements
-          version_match = re.search(r'"version"\s*:\s*"([^"]+)"', html_content)
-          if not version_match:
-              # Fallback pattern targeting standard App Store version strings
-              version_match = re.search(r'Latest Version:\s*([0-9.]+)', html_content)
-
-          if version_match:
-              current_version = version_match.group(1).strip()
-          else:
-              print("Critical Error: Could not parse live version structure from App Store metadata.")
+          if not current_version:
+              print("Critical Error: Failed to isolate target version number from Apple infrastructure.")
               sys.exit(1)
 
           print(f"Live App Store Version Found: {current_version}")
 
-          # 3. Check if your repository already has a release tag for this version
+          # 2. Check if your repository already has a release tag for this version
           repo = os.environ['GITHUB_REPOSITORY']
           gh_headers = {"Authorization": f"token {os.environ['GITHUB_TOKEN']}"}
           tag_url = f"https://api.github.com/repos/{repo}/releases/tags/v{current_version}"
