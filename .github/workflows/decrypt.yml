@@ -1,4 +1,4 @@
-name: FastDecryptBot (AppAssasin) Decrypt
+name: Automated Spotify Update Fetcher
 
 on:
   schedule:
