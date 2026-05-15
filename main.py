@@ -7,7 +7,7 @@ api_id = int(os.environ['TELEGRAM_API_ID'])
 api_hash = os.environ['TELEGRAM_API_HASH']
 session_str = os.environ['TELEGRAM_SESSION']
 
-bot_username = "AppAssassin"
+bot_username = "FastDecryptBot"
 spotify_url = "https://apps.apple.com/us/app/spotify-music-and-podcasts/id324684580"
 
 async def main():
