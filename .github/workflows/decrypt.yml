@@ -1,23 +1,31 @@
-name: Get Decrypted IPA
+name: Get Decrypted Spotify
 on:
-  workflow_dispatch: # Allows manual trigger
+  workflow_dispatch: # This adds a manual "Run" button in GitHub
 
 jobs:
-  decrypt:
+  run-decryption:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Install dependencies
+      - name: Install Telethon
         run: pip install telethon
 
-      - name: Run Decryption Script
+      - name: Execute Script
         env:
-          API_ID: ${{ secrets.TELEGRAM_API_ID }}
-          API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
-          SESSION_STRING: ${{ secrets.TELEGRAM_SESSION }}
-        run: python decrypt_script.py
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          TELEGRAM_SESSION: ${{ secrets.TELEGRAM_SESSION }}
+        run: python main.py
+
+      - name: Upload IPA as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Spotify-Decrypted-IPA
+          path: spotify_decrypted.ipa
