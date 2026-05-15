@@ -1,7 +1,7 @@
 name: Automated Spotify Update Fetcher
 on:
   schedule:
-    - cron: '0 0 * * *' # Runs automatically every single day at midnight UTC
+    - cron: '0 0 * * *' # Automatically runs every single day at midnight UTC
   workflow_dispatch: # Keeps your manual "Run workflow" button active
 
 jobs:
@@ -22,35 +22,47 @@ jobs:
       - name: Install Dependencies
         run: pip install telethon requests
 
-      - name: Check Live App Store API vs GitHub Releases
+      - name: Check Live App Store Webpage vs GitHub Releases
         id: check_version
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python - <<EOF
           import requests
+          import re
           import os
           import sys
 
-          # 1. Directly query Apple's official un-cached software lookup API
-          # This is the exact data source Apple devices use to check for updates
-          url = "https://itunes.apple.com/lookup?id=324684580&country=us&entity=software"
+          # 1. Fetch the live web view directly to intercept the version number
+          url = "https://apps.apple.com/us/app/spotify-music-and-podcasts/id324684580"
+          headers = {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "Accept-Language": "en-US,en;q=0.9"
+          }
           
           try:
-              response = requests.get(url, timeout=15).json()
-              results = response.get("results", [])
-              if not results:
-                  print("Critical Error: Spotify application ID not resolved by Apple API.")
-                  sys.exit(1)
-              
-              current_version = results[0].get("version").strip()
+              html_content = requests.get(url, headers=headers, timeout=15).text
           except Exception as e:
-              print(f"Failed to communicate with Apple lookup infrastructure: {e}")
+              print(f"Failed to connect to Apple servers: {e}")
               sys.exit(1)
 
-          print(f"Live App Store Version Found: {current_version}")
+          # 2. Parse the dynamic version tracker from the script configuration tags
+          # This looks for the embedded data string that populates the "What's New" module
+          version_match = re.search(r'\"versionString\"\s*:\s*\"([0-9.]+)\"', html_content)
+          
+          if not version_match:
+              # Fallback pattern matching the text structure inside internal page models
+              version_match = re.search(r'\"whatsNew\"[^}]+?\"version\"\s*:\s*\"([0-9.]+)\"', html_content)
 
-          # 2. Check if your repository already has a release tag for this version
+          if version_match:
+              current_version = version_match.group(1).strip()
+          else:
+              print("Critical Error: Failed to isolate live webpage version elements.")
+              sys.exit(1)
+
+          print(f"Live App Store Version Safely Isolated: {current_version}")
+
+          # 3. Check if your repository already has a release tag for this version
           repo = os.environ['GITHUB_REPOSITORY']
           gh_headers = {"Authorization": f"token {os.environ['GITHUB_TOKEN']}"}
           tag_url = f"https://api.github.com/repos/{repo}/releases/tags/v{current_version}"
