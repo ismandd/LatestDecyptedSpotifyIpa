@@ -33,10 +33,11 @@ jobs:
           import os
           import sys
 
-          # 1. Fetch the live web view directly to intercept the version number
+          # 1. Fake a complete modern Mac Safari browser footprint to get full raw source text
           url = "https://apps.apple.com/us/app/spotify-music-and-podcasts/id324684580"
           headers = {
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
               "Accept-Language": "en-US,en;q=0.9"
           }
           
@@ -46,18 +47,14 @@ jobs:
               print(f"Failed to connect to Apple servers: {e}")
               sys.exit(1)
 
-          # 2. Parse the dynamic version tracker from the script configuration tags
-          # This looks for the embedded data string that populates the "What's New" module
-          version_match = re.search(r'\"versionString\"\s*:\s*\"([0-9.]+)\"', html_content)
-          
-          if not version_match:
-              # Fallback pattern matching the text structure inside internal page models
-              version_match = re.search(r'\"whatsNew\"[^}]+?\"version\"\s*:\s*\"([0-9.]+)\"', html_content)
+          # 2. Extract version targeting Apple's embedded web layout blocks.
+          # This specifically searches for "version":"9.1.48" inside the raw code data arrays.
+          version_match = re.search(r'\"version\"\s*:\s*\"([0-9]+\.[0-9]+\.[0-9]+)\"', html_content)
 
           if version_match:
               current_version = version_match.group(1).strip()
           else:
-              print("Critical Error: Failed to isolate live webpage version elements.")
+              print("Critical Error: Failed to isolate the version text element from the web source code.")
               sys.exit(1)
 
           print(f"Live App Store Version Safely Isolated: {current_version}")
