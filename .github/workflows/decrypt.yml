@@ -1,4 +1,5 @@
 name: Automated Spotify Update Fetcher
+
 on:
   schedule:
     - cron: '0 0 * * *'
@@ -10,6 +11,7 @@ jobs:
     outputs:
       release_exists: ${{ steps.check_version.outputs.exists }}
       store_version: ${{ steps.check_version.outputs.version }}
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -19,107 +21,163 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install Selenium Tracker
-        run: pip install telethon requests selenium
+      - name: Install Dependencies
+        run: |
+          pip install telethon requests beautifulsoup4 lxml
 
-      - name: Execute Headless Chrome and Extract DOM State
+      - name: Fetch Live Version From App Store
         id: check_version
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python - <<EOF
+          python - <<'EOF'
           import os
-          import sys
-          import time
-          import requests
           import re
-          from selenium import webdriver
-          from selenium.webdriver.chrome.options import Options
-          from selenium.webdriver.common.by import By
+          import sys
+          import json
+          import requests
 
-          chrome_options = Options()
-          chrome_options.add_argument("--headless=new")
-          chrome_options.add_argument("--no-sandbox")
-          chrome_options.add_argument("--disable-dev-shm-usage")
-          chrome_options.add_argument("user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-          
-          driver = webdriver.Chrome(options=chrome_options)
-          driver.set_window_size(1920, 1080)
-          
-          url = "https://apps.apple.com/us/app/spotify-music-and-podcasts/id324684580"
+          APP_ID = "324684580"
+
+          headers = {
+              "User-Agent": (
+                  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/124.0.0.0 Safari/537.36"
+              )
+          }
+
           current_version = None
-          live_inspect_dom = ""
-          
+
+          # -----------------------------------------
+          # METHOD 1: Scrape apps.apple.com HTML
+          # -----------------------------------------
+
+          app_url = f"https://apps.apple.com/us/app/id{APP_ID}"
+
           try:
-              driver.get(url)
-              time.sleep(5)
-              
-              driver.execute_script("window.scrollTo(0, document.body.scrollHeight * 0.25);")
-              time.sleep(1)
+              print("Attempting live App Store scrape...")
 
-              live_inspect_dom = driver.execute_script("return document.documentElement.outerHTML;")
+              response = requests.get(
+                  app_url,
+                  headers=headers,
+                  timeout=30
+              )
 
-              elements = driver.find_elements(By.CLASS_NAME, "whats-new__latest__version")
-              if elements and elements[0].text:
-                  raw_text = elements[0].text
-                  print(f"Inspect Element text match: '{raw_text}'")
-                  version_match = re.search(r'([0-9.]+)', raw_text)
-                  if version_match:
-                      current_version = version_match.group(1).strip()
+              response.raise_for_status()
 
-              if not current_version:
-                  version_match = re.search(r'\"versionString\"\s*:\s*\"([0-9.]+)\"', live_inspect_dom)
-                  if version_match:
-                      current_version = version_match.group(1).strip()
+              html = response.text
+
+              patterns = [
+                  r'"versionDisplay":"([^"]+)"',
+                  r'"softwareVersion":"([^"]+)"',
+                  r'"bundleShortVersionString":"([^"]+)"'
+              ]
+
+              for pattern in patterns:
+                  match = re.search(pattern, html)
+
+                  if match:
+                      current_version = match.group(1).strip()
+                      print(f"HTML Engine match: '{current_version}'")
+                      break
 
           except Exception as e:
-              print(f"Browser Execution Alert: {e}")
-              
-          finally:
-              try:
-                  if not live_inspect_dom:
-                      live_inspect_dom = driver.page_source
-                  
-                  with open("appstore_inspect_dump.html", "w", encoding="utf-8") as f:
-                      f.write(live_inspect_dom)
-                      
-                  driver.save_screenshot("browser_view.png")
-              except Exception as dump_err:
-                  print(f"Failed to generate debug dump: {dump_err}")
-                  
-              driver.quit()
+              print(f"HTML scrape failed: {e}")
+
+          # -----------------------------------------
+          # METHOD 2: Fallback to legacy API
+          # -----------------------------------------
 
           if not current_version:
-              print("❌ Critical Error: Unable to extract live version from the browser DOM.")
+              try:
+                  print("Falling back to iTunes Lookup API...")
+
+                  lookup_url = (
+                      f"https://itunes.apple.com/lookup"
+                      f"?id={APP_ID}&country=us"
+                  )
+
+                  response = requests.get(
+                      lookup_url,
+                      headers=headers,
+                      timeout=30
+                  )
+
+                  response.raise_for_status()
+
+                  data = response.json()
+
+                  if data.get("resultCount", 0) > 0:
+                      current_version = (
+                          data["results"][0]
+                          .get("version")
+                      )
+
+                      print(f"API Engine match: '{current_version}'")
+
+              except Exception as e:
+                  print(f"Lookup API failed: {e}")
+
+          # -----------------------------------------
+          # HARD FAIL
+          # -----------------------------------------
+
+          if not current_version:
+              print(
+                  "❌ Critical Error: "
+                  "Unable to extract App Store version."
+              )
               sys.exit(1)
 
-          print(f"✅ Success! Live Rendered App Store Version Found: {current_version}")
+          print(
+              f"✅ Success! "
+              f"Live App Store Version Found: {current_version}"
+          )
 
-          repo = os.environ['GITHUB_REPOSITORY']
-          gh_headers = {"Authorization": f"token {os.environ['GITHUB_TOKEN']}"}
-          tag_url = f"https://api.github.com/repos/{repo}/releases/tags/v{current_version}"
-          
-          release_res = requests.get(tag_url, headers=gh_headers)
-          
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+          # -----------------------------------------
+          # CHECK EXISTING RELEASE
+          # -----------------------------------------
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+
+          gh_headers = {
+              "Authorization": (
+                  f"token {os.environ['GITHUB_TOKEN']}"
+              )
+          }
+
+          tag_url = (
+              f"https://api.github.com/repos/"
+              f"{repo}/releases/tags/v{current_version}"
+          )
+
+          release_res = requests.get(
+              tag_url,
+              headers=gh_headers,
+              timeout=30
+          )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"version={current_version}\n")
-              if release_res.status_code == 200:
-                  print(f"Version v{current_version} already has a public release. Terminating pipeline.")
-                  f.write("exists=true\n")
-              else:
-                  print(f"New update detected (v{current_version})! Initializing download pipeline.")
-                  f.write("exists=false\n")
-          EOF
 
-      - name: Upload Browser View Logs On Failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: selenium-browser-debug
-          path: |
-            appstore_inspect_dump.html
-            browser_view.png
-          retention-days: 7
+              if release_res.status_code == 200:
+                  print(
+                      f"Version v{current_version} "
+                      f"already exists."
+                  )
+
+                  f.write("exists=true\n")
+
+              else:
+                  print(
+                      f"🚀 New update detected "
+                      f"(v{current_version})"
+                  )
+
+                  f.write("exists=false\n")
+
+          EOF
 
       - name: Execute Telegram Decryption Script
         if: steps.check_version.outputs.exists == 'false'
@@ -141,8 +199,10 @@ jobs:
     needs: check-and-download
     if: needs.check-and-download.outputs.release_exists == 'false'
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
+
     steps:
       - name: Download temporary buffered file
         uses: actions/download-artifact@v4
