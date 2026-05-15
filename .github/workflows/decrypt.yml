@@ -37,19 +37,15 @@ jobs:
           from selenium.webdriver.chrome.options import Options
           from selenium.webdriver.common.by import By
 
-          # 1. Configure a headless Chrome browser with a wide 50% zoomed-out view
+          # 1. Configure a headless Chrome browser at 100% standard zoom
           chrome_options = Options()
           chrome_options.add_argument("--headless=new")
           chrome_options.add_argument("--no-sandbox")
           chrome_options.add_argument("--disable-dev-shm-usage")
-          
-          # Force Chrome to scale down to 50% (zooms out the viewport)
-          chrome_options.add_argument("--force-device-scale-factor=0.5")
           chrome_options.add_argument("user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
           
           driver = webdriver.Chrome(options=chrome_options)
-          # Set a massive desktop window size to avoid narrow/mobile responsive stacking
-          driver.set_window_size(1920, 1080)
+          driver.set_window_size(1920, 1080) # Clean standard desktop viewport
           
           url = "https://apps.apple.com/us/app/spotify-music-and-podcasts/id324684580"
           current_version = None
@@ -59,8 +55,11 @@ jobs:
               # Give the JavaScript engine 5 full seconds to execute and populate the layout
               time.sleep(5)
               
+              # Scroll down exactly 25% of the page height to center the version/What's New section
+              driver.execute_script("window.scrollTo(0, document.body.scrollHeight * 0.25);")
+              time.sleep(1) # Give the scrolling animation a split second to settle
+
               # 2. Extract directly from the live DOM (Inspect Element array)
-              # Target the precise text container class that holds the version number string
               elements = driver.find_elements(By.CLASS_NAME, "whats-new__latest__version")
               if elements and elements[0].text:
                   raw_text = elements[0].text
@@ -84,7 +83,7 @@ jobs:
               try:
                   with open("appstore_inspect_dump.html", "w", encoding="utf-8") as f:
                       f.write(driver.page_source)
-                  # This will save as a clean, wide-angle 50% scaled-out overview
+                  # This saves as a standard 100% scale screenshot scrolled 25% down the layout
                   driver.save_screenshot("browser_view.png")
               except Exception as dump_err:
                   print(f"Failed to generate debug dump: {dump_err}")
@@ -116,7 +115,7 @@ jobs:
                   f.write("exists=false\n")
           EOF
 
-      # If the workflow fails, upload the zoomed-out layout screenshot and compiled HTML DOM
+      # If the workflow fails, upload the scrolled layout screenshot and compiled HTML DOM
       - name: Upload Browser View Logs On Failure
         if: failure()
         uses: actions/upload-artifact@v4
