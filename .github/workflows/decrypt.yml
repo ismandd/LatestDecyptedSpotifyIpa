@@ -31,60 +31,187 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python check_version.py
+          python - <<'EOF'
+          import os
+          import re
+          import sys
+          import requests
 
-      # ----------------------------------------
-      # FASTDECRYPTBOT
-      # ----------------------------------------
+          APP_ID = "324684580"
 
-      - name: Download IPA From FastDecryptBot
+          headers = {
+              "User-Agent": (
+                  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/124.0.0.0 Safari/537.36"
+              )
+          }
+
+          current_version = None
+
+          # -----------------------------------------
+          # METHOD 1: Scrape apps.apple.com HTML
+          # -----------------------------------------
+
+          app_url = f"https://apps.apple.com/us/app/id{APP_ID}"
+
+          try:
+              print("Attempting live App Store scrape...")
+
+              response = requests.get(
+                  app_url,
+                  headers=headers,
+                  timeout=30
+              )
+
+              response.raise_for_status()
+
+              html = response.text
+
+              patterns = [
+                  r'"versionDisplay":"([^"]+)"',
+                  r'"softwareVersion":"([^"]+)"',
+                  r'"bundleShortVersionString":"([^"]+)"'
+              ]
+
+              for pattern in patterns:
+                  match = re.search(pattern, html)
+
+                  if match:
+                      current_version = match.group(1).strip()
+                      print(f"HTML Engine match: '{current_version}'")
+                      break
+
+          except Exception as e:
+              print(f"HTML scrape failed: {e}")
+
+          # -----------------------------------------
+          # METHOD 2: Fallback to legacy API
+          # -----------------------------------------
+
+          if not current_version:
+              try:
+                  print("Falling back to iTunes Lookup API...")
+
+                  lookup_url = (
+                      f"https://itunes.apple.com/lookup"
+                      f"?id={APP_ID}&country=us"
+                  )
+
+                  response = requests.get(
+                      lookup_url,
+                      headers=headers,
+                      timeout=30
+                  )
+
+                  response.raise_for_status()
+
+                  data = response.json()
+
+                  if data.get("resultCount", 0) > 0:
+                      current_version = (
+                          data["results"][0]
+                          .get("version")
+                      )
+
+                      print(f"API Engine match: '{current_version}'")
+
+              except Exception as e:
+                  print(f"Lookup API failed: {e}")
+
+          # -----------------------------------------
+          # FAIL IF VERSION NOT FOUND
+          # -----------------------------------------
+
+          if not current_version:
+              print(
+                  "❌ Critical Error: "
+                  "Unable to extract App Store version."
+              )
+              sys.exit(1)
+
+          print(
+              f"✅ Success! "
+              f"Live App Store Version Found: {current_version}"
+          )
+
+          # -----------------------------------------
+          # CHECK EXISTING GITHUB RELEASE
+          # -----------------------------------------
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+
+          gh_headers = {
+              "Authorization": (
+                  f"token {os.environ['GITHUB_TOKEN']}"
+              )
+          }
+
+          tag_url = (
+              f"https://api.github.com/repos/"
+              f"{repo}/releases/tags/v{current_version}"
+          )
+
+          release_res = requests.get(
+              tag_url,
+              headers=gh_headers,
+              timeout=30
+          )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"version={current_version}\n")
+
+              if release_res.status_code == 200:
+                  print(
+                      f"Version v{current_version} "
+                      f"already exists."
+                  )
+
+                  f.write("exists=true\n")
+
+              else:
+                  print(
+                      f"🚀 New update detected "
+                      f"(v{current_version})"
+                  )
+
+                  f.write("exists=false\n")
+
+          EOF
+
+      - name: Cleanup old IPA files
+        if: steps.check_version.outputs.exists == 'false'
+        run: rm -f *.ipa
+
+      - name: Execute Telegram Decryption Script
         if: steps.check_version.outputs.exists == 'false'
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
           TELEGRAM_SESSION: ${{ secrets.TELEGRAM_SESSION }}
-        run: |
-          python fastdecrypt.py
+        run: python main.py
 
-      # ----------------------------------------
-      # EEVEEDECRYPTERBOT
-      # ----------------------------------------
-
-      - name: Download IPA From EeveeDecrypterBot
-        if: steps.check_version.outputs.exists == 'false'
-        env:
-          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
-          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
-          TELEGRAM_SESSION: ${{ secrets.TELEGRAM_SESSION }}
-        run: |
-          python eevee.py
-
-      # ----------------------------------------
-      # VERIFY IPA FILES
-      # ----------------------------------------
-
-      - name: Verify Downloaded Files
+      - name: Verify IPA files exist
         if: steps.check_version.outputs.exists == 'false'
         run: |
-          echo "Downloaded IPA files:"
-          ls -lah *.ipa
+          IPA_COUNT=$(find . -maxdepth 1 -name "*.ipa" | wc -l)
 
-          COUNT=$(ls -1 *.ipa 2>/dev/null | wc -l)
+          echo "Found $IPA_COUNT IPA files."
 
-          if [ "$COUNT" -eq 0 ]; then
-            echo "❌ No IPA files downloaded."
+          if [ "$IPA_COUNT" -lt 2 ]; then
+            echo "❌ Expected 2 IPA files."
             exit 1
           fi
 
-      # ----------------------------------------
-      # UPLOAD ARTIFACT
-      # ----------------------------------------
+      - name: Show downloaded IPA files
+        if: steps.check_version.outputs.exists == 'false'
+        run: ls -lh *.ipa
 
-      - name: Upload IPA Artifact Buffer
+      - name: Upload IPA artifacts
         if: steps.check_version.outputs.exists == 'false'
         uses: actions/upload-artifact@v4
         with:
-          name: raw-ipa-buffer
+          name: spotify-decrypted-ipas
           path: "*.ipa"
           retention-days: 1
 
@@ -99,13 +226,13 @@ jobs:
       contents: write
 
     steps:
-      - name: Download Buffered Files
+      - name: Download IPA artifacts
         uses: actions/download-artifact@v4
         with:
-          name: raw-ipa-buffer
+          name: spotify-decrypted-ipas
 
-      - name: Show Files
-        run: ls -lah
+      - name: Show files before release
+        run: find . -type f -name "*.ipa"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -113,13 +240,12 @@ jobs:
           tag_name: "v${{ needs.check-and-download.outputs.store_version }}"
           name: "Spotify v${{ needs.check-and-download.outputs.store_version }} (Decrypted)"
           body: |
-            Automated decryption release.
+            Automated Spotify decrypted IPA release.
 
             Sources:
             - @FastDecryptBot
-            - @eeveeDecrypterBot
+            - @eeveedecrypterbot
 
-          files: |
-            *.ipa
-
+            Original filenames preserved automatically.
+          files: "**/*.ipa"
           generate_release_notes: false
