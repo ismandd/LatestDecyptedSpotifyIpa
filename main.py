@@ -1,4 +1,5 @@
 import os
+import re
 import asyncio
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -16,6 +17,11 @@ bots = [
 
 MAX_WAIT_SECONDS = 900
 CHECK_INTERVAL = 5
+
+def clean_filename(filename):
+    cleaned = re.sub(r'[-_]v?\d+(?:\.\d+)+', '', filename)
+    cleaned = re.sub(r'-+', '-', cleaned)
+    return cleaned
 
 async def wait_for_file(client, bot_username):
     print(f"[{bot_username}] Sending App Store URL...")
@@ -51,6 +57,8 @@ async def wait_for_file(client, bot_username):
 
                 if not file_name.lower().endswith(".ipa"):
                     continue
+
+                file_name = clean_filename(file_name)
 
                 print(
                     f"[{bot_username}] "
