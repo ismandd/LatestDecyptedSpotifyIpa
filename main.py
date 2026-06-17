@@ -63,7 +63,7 @@ async def wait_for_file(client, bot_username, latest_version):
 
                 file_name = msg.file.name
                 if not file_name:
-                    file_name = f"{bot_username}.ipa"
+                    file_name = f"Spotify.ipa"
 
                 if not file_name.lower().endswith(".ipa"):
                     continue
@@ -77,8 +77,7 @@ async def wait_for_file(client, bot_username, latest_version):
                     print(f"[{bot_username}] Skipped: version {actual_version} is not higher than latest release {latest_version}")
                     return None
 
-                base_name = os.path.splitext(clean_filename(file_name))[0]
-                file_name = f"{base_name}-{bot_username}.ipa"
+                file_name = clean_filename(file_name)
 
                 print(f"[{bot_username}] Downloading: {file_name}")
                 await client.download_media(msg, file=file_name)
