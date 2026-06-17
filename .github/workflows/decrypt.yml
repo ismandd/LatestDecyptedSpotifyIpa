@@ -25,7 +25,122 @@ jobs:
         run: |
           pip install telethon requests beautifulsoup4 lxml
 
-          elif [ "$IPA_COUNT" -lt 1 ]; then
+      - name: Fetch Live Version From App Store
+        id: check_version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python - <<'EOF'
+          import os
+          import re
+          import sys
+          import requests
+
+          APP_ID = "324684580"
+
+          headers = {
+              "User-Agent": (
+                  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/124.0.0.0 Safari/537.36"
+              )
+          }
+
+          current_version = None
+          app_url = f"https://apps.apple.com/us/app/id{APP_ID}"
+
+          try:
+              print("Attempting live App Store scrape...")
+              response = requests.get(
+                  app_url,
+                  headers=headers,
+                  timeout=30
+              )
+              response.raise_for_status()
+              html = response.text
+              patterns = [
+                  r'"versionDisplay":"([^"]+)"',
+                  r'"softwareVersion":"([^"]+)"',
+                  r'"bundleShortVersionString":"([^"]+)"'
+              ]
+              for pattern in patterns:
+                  match = re.search(pattern, html)
+                  if match:
+                      current_version = match.group(1).strip()
+                      print(f"HTML Engine match: '{current_version}'")
+                      break
+          except Exception as e:
+              print(f"HTML scrape failed: {e}")
+
+          if not current_version:
+              try:
+                  print("Falling back to iTunes Lookup API...")
+                  lookup_url = (
+                      f"https://itunes.apple.com/lookup"
+                      f"?id={APP_ID}&country=us"
+                  )
+                  response = requests.get(
+                      lookup_url,
+                      headers=headers,
+                      timeout=30
+                  )
+                  response.raise_for_status()
+                  data = response.json()
+                  if data.get("resultCount", 0) > 0:
+                      current_version = (
+                          data["results"][0]
+                          .get("version")
+                      )
+                      print(f"API Engine match: '{current_version}'")
+              except Exception as e:
+                  print(f"Lookup API failed: {e}")
+
+          if not current_version:
+              print(
+                  "❌ Critical Error: "
+                  "Unable to extract App Store version."
+              )
+              sys.exit(1)
+
+          print(
+              f"✅ Success! "
+              f"Live App Store Version Found: {current_version}"
+          )
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          gh_headers = {
+              "Authorization": (
+                  f"token {os.environ['GITHUB_TOKEN']}"
+              )
+          }
+
+          tag_url = (
+              f"https://api.github.com/repos/"
+              f"{repo}/releases/tags/v{current_version}"
+          )
+
+          release_res = requests.get(
+              tag_url,
+              headers=gh_headers,
+              timeout=30
+          )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"version={current_version}\n")
+              if release_res.status_code == 200:
+                  print(
+                      f"Version v{current_version} "
+                      f"already exists."
+                  )
+                  f.write("exists=true\n")
+              else:
+                  print(
+                      f"🚀 New update detected "
+                      f"(v{current_version})"
+                  )
+                  f.write("exists=false\n")
+          EOF
+
       - name: Cleanup old IPA files
         run: rm -f *.ipa
 
