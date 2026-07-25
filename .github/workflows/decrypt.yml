@@ -36,7 +36,7 @@ jobs:
           import sys
           import requests
 
-          APP_ID = "324684580"
+          APP_ID = "6741358035"
 
           headers = {
               "User-Agent": (
