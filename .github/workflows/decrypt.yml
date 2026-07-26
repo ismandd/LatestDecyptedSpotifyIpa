@@ -46,7 +46,7 @@ jobs:
           import requests
 
           DEFAULT_URL = "https://apps.apple.com/dk/app/spotify-music-and-podcasts/id324684580"
-          app_url = os.environ.get("APP_URL", DEFAULT_URL).strip()
+          app_url = os.environ.get("APP_URL", "").strip()
           if not app_url:
               app_url = DEFAULT_URL
 
@@ -107,6 +107,7 @@ jobs:
 
               with open(os.environ["GITHUB_OUTPUT"], "a") as f:
                   f.write(f"version={current_version}\n")
+                  f.write(f"is_default=true\n")
                   if release_res.status_code == 200:
                       print(f"Version v{current_version} already exists.")
                       f.write("exists=true\n")
@@ -114,9 +115,10 @@ jobs:
                       print(f"New update detected (v{current_version})")
                       f.write("exists=false\n")
           else:
-              print("Non-default App Store link provided. Skipping version check.")
+              print(f"Custom App Store link provided (ID: {app_id}). Skipping release version check.")
               with open(os.environ["GITHUB_OUTPUT"], "a") as f:
                   f.write("version=0.0.0\n")
+                  f.write("is_default=false\n")
                   f.write("exists=false\n")
           EOF
 
@@ -131,6 +133,8 @@ jobs:
           TELEGRAM_SESSION: ${{ secrets.TELEGRAM_SESSION }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          APP_URL: ${{ env.APP_URL }}
+          LIVE_VERSION: ${{ steps.check_version.outputs.version }}
         run: python main.py
 
       - name: Verify IPA files exist
@@ -158,8 +162,8 @@ jobs:
       - name: Log Artifact URL
         if: steps.run_script.outputs.downloaded_count != '0' && steps.run_script.outputs.downloaded_count != '' && steps.run_script.outputs.is_default != 'true'
         run: |
-          echo "Non-default App Store link used. Skipping release publish."
-          echo "Artifacts URL / Run Page: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "Custom App Store link processed."
+          echo "Artifacts URL / Action Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
   upload-and-release:
     needs: check-and-download
