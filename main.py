@@ -11,7 +11,7 @@ session_str = os.environ['TELEGRAM_SESSION']
 github_token = os.environ['GITHUB_TOKEN']
 github_repo = os.environ['GITHUB_REPOSITORY']
 
-spotify_url = "https://apps.apple.com/us/app/spotify-music-and-podcasts/id324684580"
+spotify_url = "https://apps.apple.com/dk/app/psylo-privacy-browser-proxy/id6741358035"
 
 bots = [
     "FastDecryptBot",
