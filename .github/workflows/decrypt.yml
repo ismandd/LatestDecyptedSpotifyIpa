@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 * * * *'
   workflow_dispatch:
+    inputs:
+      app_url:
+        description: 'App Store URL'
+        required: false
+        default: 'https://apps.apple.com/dk/app/spotify-music-and-podcasts/id324684580'
 
 jobs:
   check-and-download:
@@ -11,6 +16,10 @@ jobs:
     outputs:
       downloaded_count: ${{ steps.run_script.outputs.downloaded_count }}
       actual_version: ${{ steps.run_script.outputs.actual_version }}
+      is_default: ${{ steps.run_script.outputs.is_default }}
+
+    env:
+      APP_URL: ${{ inputs.app_url || 'https://apps.apple.com/dk/app/spotify-music-and-podcasts/id324684580' }}
 
     steps:
       - name: Checkout Code
@@ -36,108 +45,78 @@ jobs:
           import sys
           import requests
 
-          APP_ID = "6741358035"
+          DEFAULT_URL = "https://apps.apple.com/dk/app/spotify-music-and-podcasts/id324684580"
+          app_url = os.environ.get("APP_URL", DEFAULT_URL).strip()
+          if not app_url:
+              app_url = DEFAULT_URL
 
-          headers = {
-              "User-Agent": (
-                  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                  "AppleWebKit/537.36 (KHTML, like Gecko) "
-                  "Chrome/124.0.0.0 Safari/537.36"
-              )
-          }
+          is_default = (app_url == DEFAULT_URL)
 
-          current_version = None
-          app_url = f"https://apps.apple.com/us/app/id{APP_ID}"
+          id_match = re.search(r'id(\d+)', app_url)
+          app_id = id_match.group(1) if id_match else "324684580"
 
-          try:
-              print("Attempting live App Store scrape...")
-              response = requests.get(
-                  app_url,
-                  headers=headers,
-                  timeout=30
-              )
-              response.raise_for_status()
-              html = response.text
-              patterns = [
-                  r'"versionDisplay":"([^"]+)"',
-                  r'"softwareVersion":"([^"]+)"',
-                  r'"bundleShortVersionString":"([^"]+)"'
-              ]
-              for pattern in patterns:
-                  match = re.search(pattern, html)
-                  if match:
-                      current_version = match.group(1).strip()
-                      print(f"HTML Engine match: '{current_version}'")
-                      break
-          except Exception as e:
-              print(f"HTML scrape failed: {e}")
+          current_version = "0.0.0"
 
-          if not current_version:
+          if is_default:
+              headers = {
+                  "User-Agent": (
+                      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/124.0.0.0 Safari/537.36"
+                  )
+              }
+
               try:
-                  print("Falling back to iTunes Lookup API...")
-                  lookup_url = (
-                      f"https://itunes.apple.com/lookup"
-                      f"?id={APP_ID}&country=us"
-                  )
-                  response = requests.get(
-                      lookup_url,
-                      headers=headers,
-                      timeout=30
-                  )
+                  response = requests.get(app_url, headers=headers, timeout=30)
                   response.raise_for_status()
-                  data = response.json()
-                  if data.get("resultCount", 0) > 0:
-                      current_version = (
-                          data["results"][0]
-                          .get("version")
-                      )
-                      print(f"API Engine match: '{current_version}'")
+                  html = response.text
+                  patterns = [
+                      r'"versionDisplay":"([^"]+)"',
+                      r'"softwareVersion":"([^"]+)"',
+                      r'"bundleShortVersionString":"([^"]+)"'
+                  ]
+                  for pattern in patterns:
+                      match = re.search(pattern, html)
+                      if match:
+                          current_version = match.group(1).strip()
+                          break
               except Exception as e:
-                  print(f"Lookup API failed: {e}")
+                  print(f"HTML scrape failed: {e}")
 
-          if not current_version:
-              print(
-                  "❌ Critical Error: "
-                  "Unable to extract App Store version."
-              )
-              sys.exit(1)
+              if current_version == "0.0.0":
+                  try:
+                      lookup_url = f"https://itunes.apple.com/lookup?id={app_id}&country=dk"
+                      response = requests.get(lookup_url, headers=headers, timeout=30)
+                      response.raise_for_status()
+                      data = response.json()
+                      if data.get("resultCount", 0) > 0:
+                          current_version = data["results"][0].get("version", "0.0.0")
+                  except Exception as e:
+                      print(f"Lookup API failed: {e}")
 
-          print(
-              f"✅ Success! "
-              f"Live App Store Version Found: {current_version}"
-          )
+              if current_version == "0.0.0":
+                  print("Unable to extract App Store version.")
+                  sys.exit(1)
 
-          repo = os.environ["GITHUB_REPOSITORY"]
-          gh_headers = {
-              "Authorization": (
-                  f"token {os.environ['GITHUB_TOKEN']}"
-              )
-          }
+              print(f"Live App Store Version Found: {current_version}")
 
-          tag_url = (
-              f"https://api.github.com/repos/"
-              f"{repo}/releases/tags/v{current_version}"
-          )
+              repo = os.environ["GITHUB_REPOSITORY"]
+              gh_headers = {"Authorization": f"token {os.environ['GITHUB_TOKEN']}"}
+              tag_url = f"https://api.github.com/repos/{repo}/releases/tags/v{current_version}"
+              release_res = requests.get(tag_url, headers=gh_headers, timeout=30)
 
-          release_res = requests.get(
-              tag_url,
-              headers=gh_headers,
-              timeout=30
-          )
-
-          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-              f.write(f"version={current_version}\n")
-              if release_res.status_code == 200:
-                  print(
-                      f"Version v{current_version} "
-                      f"already exists."
-                  )
-                  f.write("exists=true\n")
-              else:
-                  print(
-                      f"🚀 New update detected "
-                      f"(v{current_version})"
-                  )
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write(f"version={current_version}\n")
+                  if release_res.status_code == 200:
+                      print(f"Version v{current_version} already exists.")
+                      f.write("exists=true\n")
+                  else:
+                      print(f"New update detected (v{current_version})")
+                      f.write("exists=false\n")
+          else:
+              print("Non-default App Store link provided. Skipping version check.")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("version=0.0.0\n")
                   f.write("exists=false\n")
           EOF
 
@@ -160,7 +139,7 @@ jobs:
           IPA_COUNT=$(find . -maxdepth 1 -name "*.ipa" | wc -l)
           echo "Found $IPA_COUNT IPA files."
           if [ "$IPA_COUNT" -lt 1 ]; then
-            echo "❌ Expected at least 1 IPA file."
+            echo "Expected at least 1 IPA file."
             exit 1
           fi
 
@@ -172,13 +151,19 @@ jobs:
         if: steps.run_script.outputs.downloaded_count != '0' && steps.run_script.outputs.downloaded_count != ''
         uses: actions/upload-artifact@v4
         with:
-          name: spotify-decrypted-ipas
+          name: decrypted-ipas
           path: "*.ipa"
           retention-days: 1
 
+      - name: Log Artifact URL
+        if: steps.run_script.outputs.downloaded_count != '0' && steps.run_script.outputs.downloaded_count != '' && steps.run_script.outputs.is_default != 'true'
+        run: |
+          echo "Non-default App Store link used. Skipping release publish."
+          echo "Artifacts URL / Run Page: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
   upload-and-release:
     needs: check-and-download
-    if: needs.check-and-download.outputs.downloaded_count != '0' && needs.check-and-download.outputs.downloaded_count != ''
+    if: needs.check-and-download.outputs.is_default == 'true' && needs.check-and-download.outputs.downloaded_count != '0' && needs.check-and-download.outputs.downloaded_count != ''
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -187,7 +172,7 @@ jobs:
       - name: Download IPA artifacts
         uses: actions/download-artifact@v4
         with:
-          name: spotify-decrypted-ipas
+          name: decrypted-ipas
 
       - name: Show files before release
         run: find . -type f -name "*.ipa"
