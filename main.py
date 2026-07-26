@@ -12,11 +12,14 @@ github_token = os.environ['GITHUB_TOKEN']
 github_repo = os.environ['GITHUB_REPOSITORY']
 
 DEFAULT_URL = "https://apps.apple.com/dk/app/spotify-music-and-podcasts/id324684580"
-app_url = os.environ.get('APP_URL', DEFAULT_URL).strip()
+app_url = os.environ.get('APP_URL', '').strip()
 if not app_url:
     app_url = DEFAULT_URL
 
 is_default = (app_url == DEFAULT_URL)
+
+id_match = re.search(r'id(\d+)', app_url)
+app_id = id_match.group(1) if id_match else "324684580"
 
 bots = [
     "FastDecryptBot",
@@ -49,7 +52,7 @@ def get_latest_release():
     return "0.0.0"
 
 async def wait_for_file(client, bot_username, latest_version):
-    print(f"[{bot_username}] Sending App Store URL...")
+    print(f"[{bot_username}] Sending App Store URL: {app_url} (ID: {app_id})")
     await client.send_message(bot_username, app_url)
 
     print(f"[{bot_username}] Waiting for IPA response...")
@@ -76,7 +79,10 @@ async def wait_for_file(client, bot_username, latest_version):
                     continue
 
                 version_match = re.search(r'v?(\d+(?:\.\d+)+)', file_name)
-                actual_version = version_match.group(1) if version_match else "1.0.0"
+                if version_match:
+                    actual_version = version_match.group(1)
+                else:
+                    actual_version = os.environ.get("LIVE_VERSION", "1.0.0")
 
                 if is_default and parse_version(actual_version) <= parse_version(latest_version):
                     print(f"[{bot_username}] Skipped: version {actual_version} is not higher than latest release {latest_version}")
