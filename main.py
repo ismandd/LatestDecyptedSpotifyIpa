@@ -11,7 +11,12 @@ session_str = os.environ['TELEGRAM_SESSION']
 github_token = os.environ['GITHUB_TOKEN']
 github_repo = os.environ['GITHUB_REPOSITORY']
 
-spotify_url = "https://apps.apple.com/dk/app/psylo-privacy-browser-proxy/id6741358035"
+DEFAULT_URL = "https://apps.apple.com/dk/app/spotify-music-and-podcasts/id324684580"
+app_url = os.environ.get('APP_URL', DEFAULT_URL).strip()
+if not app_url:
+    app_url = DEFAULT_URL
+
+is_default = (app_url == DEFAULT_URL)
 
 bots = [
     "FastDecryptBot",
@@ -30,6 +35,8 @@ def parse_version(v_str):
     return tuple(map(int, re.findall(r'\d+', v_str)))
 
 def get_latest_release():
+    if not is_default:
+        return "0.0.0"
     headers = {"Authorization": f"token {github_token}"}
     url = f"https://api.github.com/repos/{github_repo}/releases/latest"
     try:
@@ -43,7 +50,7 @@ def get_latest_release():
 
 async def wait_for_file(client, bot_username, latest_version):
     print(f"[{bot_username}] Sending App Store URL...")
-    await client.send_message(bot_username, spotify_url)
+    await client.send_message(bot_username, app_url)
 
     print(f"[{bot_username}] Waiting for IPA response...")
     seen_message_ids = set()
@@ -63,17 +70,15 @@ async def wait_for_file(client, bot_username, latest_version):
 
                 file_name = msg.file.name
                 if not file_name:
-                    file_name = f"Spotify.ipa"
+                    file_name = "App.ipa"
 
                 if not file_name.lower().endswith(".ipa"):
                     continue
 
                 version_match = re.search(r'v?(\d+(?:\.\d+)+)', file_name)
-                if not version_match:
-                    continue
+                actual_version = version_match.group(1) if version_match else "1.0.0"
 
-                actual_version = version_match.group(1)
-                if parse_version(actual_version) <= parse_version(latest_version):
+                if is_default and parse_version(actual_version) <= parse_version(latest_version):
                     print(f"[{bot_username}] Skipped: version {actual_version} is not higher than latest release {latest_version}")
                     return None
 
@@ -99,7 +104,8 @@ async def main():
     print("Connected to Telegram.")
 
     latest_version = get_latest_release()
-    print(f"Latest GitHub release version: {latest_version}")
+    if is_default:
+        print(f"Latest GitHub release version: {latest_version}")
 
     tasks = []
     for bot in bots:
@@ -121,6 +127,7 @@ async def main():
     with open(os.environ.get("GITHUB_OUTPUT", "output.txt"), "a") as f:
         f.write(f"downloaded_count={len(successful_downloads)}\n")
         f.write(f"actual_version={max_version}\n")
+        f.write(f"is_default={'true' if is_default else 'false'}\n")
 
     await client.disconnect()
 
