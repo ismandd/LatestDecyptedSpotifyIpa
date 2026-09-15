@@ -105,43 +105,55 @@ async def wait_for_file(client, bot_username, latest_version):
     return None
 
 async def main():
-    client = TelegramClient(
-        StringSession(session_str),
-        api_id,
-        api_hash
-    )
+    client = TelegramClient(StringSession(session_str), api_id, api_hash)
+    await client.start()
+    print("Connected to Telegram.")
 
-    try:
-        await client.start()
-        print("Connected to Telegram.")
-
-        latest_version = get_latest_release()
+    latest_version = get_latest_release()
     if is_default:
         print(f"Latest GitHub release version: {latest_version}")
 
     tasks = []
     for bot in bots:
-        tasks.append(asyncio.create_task(wait_for_file(client, bot, latest_version)))
+        tasks.append(
+            asyncio.create_task(
+                wait_for_file(client, bot, latest_version)
+            )
+        )
 
     results = await asyncio.gather(*tasks)
-    successful_downloads = [result for result in results if result is not None]
+    successful_downloads = [
+        result for result in results
+        if result is not None
+    ]
 
     print("")
     print("========== SUMMARY ==========")
     print(f"Downloaded {len(successful_downloads)} IPA files.")
 
     max_version = latest_version
+
     for file_name, actual_version in successful_downloads:
         print(f" - {file_name} (Version: {actual_version})")
+
         if parse_version(actual_version) > parse_version(max_version):
             max_version = actual_version
 
     with open(os.environ.get("GITHUB_OUTPUT", "output.txt"), "a") as f:
-        f.write(f"downloaded_count={len(successful_downloads)}\n")
-        f.write(f"actual_version={max_version}\n")
-        f.write(f"is_default={'true' if is_default else 'false'}\n")
+        f.write(
+            f"downloaded_count={len(successful_downloads)}\n"
+        )
+        f.write(
+            f"actual_version={max_version}\n"
+        )
+        f.write(
+            f"is_default={'true' if is_default else 'false'}\n"
+        )
 
     await client.disconnect()
+
+if __name__ == "__main__":
+    asyncio.run(main())
 
 if __name__ == "__main__":
     asyncio.run(main())
