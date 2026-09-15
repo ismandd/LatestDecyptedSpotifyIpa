@@ -105,11 +105,17 @@ async def wait_for_file(client, bot_username, latest_version):
     return None
 
 async def main():
-    client = TelegramClient(StringSession(session_str), api_id, api_hash)
-    await client.start()
-    print("Connected to Telegram.")
+    client = TelegramClient(
+        StringSession(session_str),
+        api_id,
+        api_hash
+    )
 
-    latest_version = get_latest_release()
+    try:
+        await client.start()
+        print("Connected to Telegram.")
+
+        latest_version = get_latest_release()
     if is_default:
         print(f"Latest GitHub release version: {latest_version}")
 
