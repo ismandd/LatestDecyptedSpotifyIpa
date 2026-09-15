@@ -10,9 +10,14 @@ on:
         required: false
         default: 'https://apps.apple.com/dk/app/spotify-music-and-podcasts/id324684580'
 
+concurrency:
+  group: spotify-telegram-session
+  cancel-in-progress: false
+
 jobs:
   check-and-download:
     runs-on: ubuntu-latest
+
     outputs:
       downloaded_count: ${{ steps.run_script.outputs.downloaded_count }}
       actual_version: ${{ steps.run_script.outputs.actual_version }}
@@ -46,11 +51,13 @@ jobs:
           import requests
 
           DEFAULT_URL = "https://apps.apple.com/dk/app/spotify-music-and-podcasts/id324684580"
+
           app_url = os.environ.get("APP_URL", "").strip()
+
           if not app_url:
               app_url = DEFAULT_URL
 
-          is_default = (app_url == DEFAULT_URL)
+          is_default = app_url == DEFAULT_URL
 
           id_match = re.search(r'id(\d+)', app_url)
           app_id = id_match.group(1) if id_match else "324684580"
@@ -67,30 +74,55 @@ jobs:
               }
 
               try:
-                  response = requests.get(app_url, headers=headers, timeout=30)
+                  response = requests.get(
+                      app_url,
+                      headers=headers,
+                      timeout=30
+                  )
+
                   response.raise_for_status()
+
                   html = response.text
+
                   patterns = [
                       r'"versionDisplay":"([^"]+)"',
                       r'"softwareVersion":"([^"]+)"',
                       r'"bundleShortVersionString":"([^"]+)"'
                   ]
+
                   for pattern in patterns:
                       match = re.search(pattern, html)
+
                       if match:
                           current_version = match.group(1).strip()
                           break
+
               except Exception as e:
                   print(f"HTML scrape failed: {e}")
 
               if current_version == "0.0.0":
                   try:
-                      lookup_url = f"https://itunes.apple.com/lookup?id={app_id}&country=dk"
-                      response = requests.get(lookup_url, headers=headers, timeout=30)
+                      lookup_url = (
+                          f"https://itunes.apple.com/lookup"
+                          f"?id={app_id}&country=dk"
+                      )
+
+                      response = requests.get(
+                          lookup_url,
+                          headers=headers,
+                          timeout=30
+                      )
+
                       response.raise_for_status()
+
                       data = response.json()
+
                       if data.get("resultCount", 0) > 0:
-                          current_version = data["results"][0].get("version", "0.0.0")
+                          current_version = data["results"][0].get(
+                              "version",
+                              "0.0.0"
+                          )
+
                   except Exception as e:
                       print(f"Lookup API failed: {e}")
 
@@ -98,24 +130,53 @@ jobs:
                   print("Unable to extract App Store version.")
                   sys.exit(1)
 
-              print(f"Live App Store Version Found: {current_version}")
+              print(
+                  f"Live App Store Version Found: "
+                  f"{current_version}"
+              )
 
               repo = os.environ["GITHUB_REPOSITORY"]
-              gh_headers = {"Authorization": f"token {os.environ['GITHUB_TOKEN']}"}
-              tag_url = f"https://api.github.com/repos/{repo}/releases/tags/v{current_version}"
-              release_res = requests.get(tag_url, headers=gh_headers, timeout=30)
+
+              gh_headers = {
+                  "Authorization": (
+                      f"token {os.environ['GITHUB_TOKEN']}"
+                  )
+              }
+
+              tag_url = (
+                  f"https://api.github.com/repos/"
+                  f"{repo}/releases/tags/v{current_version}"
+              )
+
+              release_res = requests.get(
+                  tag_url,
+                  headers=gh_headers,
+                  timeout=30
+              )
 
               with open(os.environ["GITHUB_OUTPUT"], "a") as f:
                   f.write(f"version={current_version}\n")
-                  f.write(f"is_default=true\n")
+                  f.write("is_default=true\n")
+
                   if release_res.status_code == 200:
-                      print(f"Version v{current_version} already exists.")
+                      print(
+                          f"Version v{current_version} already exists."
+                      )
                       f.write("exists=true\n")
                   else:
-                      print(f"New update detected (v{current_version})")
+                      print(
+                          f"New update detected "
+                          f"(v{current_version})"
+                      )
                       f.write("exists=false\n")
+
           else:
-              print(f"Custom App Store link provided (ID: {app_id}). Skipping release version check.")
+              print(
+                  f"Custom App Store link provided "
+                  f"(ID: {app_id}). "
+                  f"Skipping release version check."
+              )
+
               with open(os.environ["GITHUB_OUTPUT"], "a") as f:
                   f.write("version=0.0.0\n")
                   f.write("is_default=false\n")
@@ -123,9 +184,10 @@ jobs:
           EOF
 
       - name: Cleanup old IPA files
-        run: rm -f *.ipa
+        run: |
+          rm -f *.ipa
 
-      - name: Execute Telegram Decryption Script
+      - name: Execute Telegram Script
         id: run_script
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
@@ -135,13 +197,16 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           APP_URL: ${{ env.APP_URL }}
           LIVE_VERSION: ${{ steps.check_version.outputs.version }}
-        run: python main.py
+        run: |
+          python main.py
 
       - name: Verify IPA files exist
         if: steps.run_script.outputs.downloaded_count != '0' && steps.run_script.outputs.downloaded_count != ''
         run: |
           IPA_COUNT=$(find . -maxdepth 1 -name "*.ipa" | wc -l)
+
           echo "Found $IPA_COUNT IPA files."
+
           if [ "$IPA_COUNT" -lt 1 ]; then
             echo "Expected at least 1 IPA file."
             exit 1
@@ -149,7 +214,8 @@ jobs:
 
       - name: Show downloaded IPA files
         if: steps.run_script.outputs.downloaded_count != '0' && steps.run_script.outputs.downloaded_count != ''
-        run: ls -lh *.ipa
+        run: |
+          ls -lh *.ipa
 
       - name: Upload IPA artifacts
         if: steps.run_script.outputs.downloaded_count != '0' && steps.run_script.outputs.downloaded_count != ''
@@ -167,8 +233,14 @@ jobs:
 
   upload-and-release:
     needs: check-and-download
-    if: needs.check-and-download.outputs.is_default == 'true' && needs.check-and-download.outputs.downloaded_count != '0' && needs.check-and-download.outputs.downloaded_count != ''
+
+    if: >
+      needs.check-and-download.outputs.is_default == 'true' &&
+      needs.check-and-download.outputs.downloaded_count != '0' &&
+      needs.check-and-download.outputs.downloaded_count != ''
+
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
 
@@ -179,7 +251,8 @@ jobs:
           name: decrypted-ipas
 
       - name: Show files before release
-        run: find . -type f -name "*.ipa"
+        run: |
+          find . -type f -name "*.ipa"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
