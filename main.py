@@ -22,7 +22,6 @@ id_match = re.search(r'id(\d+)', app_url)
 app_id = id_match.group(1) if id_match else "324684580"
 
 bots = [
-    "FastDecryptBot",
     "eeveedecrypterbot"
 ]
 
